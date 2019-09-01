@@ -58,95 +58,98 @@ def main():
     st_time     = time()
     articles    = dict([(name, {}) for name in sr_names])
     for i in range(args.slnum * args.slsize, (args.slnum + 1) * args.slsize):
-        # Download wet file from amazon AWS
-        dl_time = time()
-        fname   = url_lst[i].split('/')[-1][:-3]
-        # download and unzip if necessary
-        fpath   = pjoin(args.output_dir, 'tmp', fname)
-        print("processing", fpath)
-        if not isfile(fpath):
-            ct_try  = 0
-            while not isfile(fpath):
-                resp_c      = subprocess.run(['rm', fpath + ".gz"], stdout=subprocess.PIPE)
-                while not isfile(fpath + ".gz"):
-                    url     = "https://commoncrawl.s3.amazonaws.com/" + url_lst[i]
-                    resp_a  = subprocess.run(['wget', '-P', pjoin(args.output_dir, 'tmp'), url], stdout=subprocess.PIPE)
-                    print("download:", time() - dl_time)
-                    ct_try  += 1
-                    if ct_try > 5 and not isfile(fpath + ".gz"):
+        try:
+            # Download wet file from amazon AWS
+            dl_time = time()
+            fname   = url_lst[i].split('/')[-1][:-3]
+            # download and unzip if necessary
+            fpath   = pjoin(args.output_dir, 'tmp', fname)
+            print("processing", fpath)
+            if not isfile(fpath):
+                ct_try  = 0
+                while not isfile(fpath):
+                    resp_c      = subprocess.run(['rm', fpath + ".gz"], stdout=subprocess.PIPE)
+                    while not isfile(fpath + ".gz"):
+                        url     = "https://commoncrawl.s3.amazonaws.com/" + url_lst[i]
+                        resp_a  = subprocess.run(['wget', '-P', pjoin(args.output_dir, 'tmp'), url], stdout=subprocess.PIPE)
+                        print("download:", time() - dl_time)
+                        ct_try  += 1
+                        if ct_try > 5 and not isfile(fpath + ".gz"):
+                            print("giving up on file", fname)
+                            break
+                    downloaded  = isfile(fpath + ".gz")
+                    if downloaded:
+                        resp_b  = subprocess.run(['gunzip', fpath + ".gz"], stdout=subprocess.PIPE)
+                        print("download and gunzip:", time() - dl_time)
+                    if ct_try > 5 and not isfile(fpath):
                         print("giving up on file", fname)
                         break
-                downloaded  = isfile(fpath + ".gz")
-                if downloaded:
-                    resp_b  = subprocess.run(['gunzip', fpath + ".gz"], stdout=subprocess.PIPE)
-                    print("download and gunzip:", time() - dl_time)
-                if ct_try > 5 and not isfile(fpath):
-                    print("giving up on file", fname)
-                    break
-        else:
-            downloaded = isfile(fpath)
-        if not downloaded:
-            print("FAILED DOWNLOADING ", fpath)
+            else:
+                downloaded = isfile(fpath)
+            if not downloaded:
+                print("FAILED DOWNLOADING ", fpath)
+                continue
+            # Extract, tokenize, and filter articles by language
+            f = open(fpath, buffering=4096)
+            article_url = ''
+            article_id  = ''
+            article_txt = ''
+            last_line   = ''
+            read_text   = False
+            ct          = 0
+            start_time = time()
+            ccid_path_tuple = False
+            for line in f:
+                if line.startswith("WARC/1.0"):
+                    if ccid_path_tuple:
+                        ct += 1
+                        article     = {'ccid': article_id,
+                                       'url' : article_url,
+                                       'text': word_url_tokenize(article_txt)}
+                        name, eli_k, num            = ccid_path_tuple
+                        articles[name][eli_k[0]]   = articles[name].get(eli_k[0], [])
+                        articles[name][eli_k[0]]   += [(eli_k, num, article)]
+                    article_txt = ''
+                    read_text   = False
+                if line.startswith("WARC-Target-URI"):
+                    try:
+                        article_url     = line.strip().split()[-1]
+                    except:
+                        article_url     = '<UNK>'
+                if line.startswith("WARC-Record-ID"):
+                    try:
+                        article_id      = line.strip().split()[-1]
+                        ccid_path_tuple = select_ccid.get(article_id, False)
+                    except:
+                        article_id      = '<UNK>'
+                        ccid_path_tuple = False
+                if read_text and (last_line.strip() + line.strip()) != '':
+                    article_txt += line + '\n'
+                    last_line   = line
+                if line.startswith("Content-Length: ") and ccid_path_tuple:
+                    read_text   = True
+            if ccid_path_tuple:
+                ct += 1
+                article     = {'ccid': article_id,
+                               'url' : article_url,
+                               'text': word_url_tokenize(article_txt)}
+                name, eli_k, num            = ccid_path_tuple
+                articles[name][eli_k[0]]   = articles[name].get(eli_k[0], [])
+                articles[name][eli_k[0]]   += [(eli_k, num, article)]
+            f.close()
+            print(">>>>>>>>>> ARTICLES FOUND %d in %.2f" % (ct, time() - start_time))
+            if i % args.save_freq == args.save_freq - 1:
+                for name, elik_maps in articles.items():
+                    print('saving', name, i, len(elik_maps))
+                    for st, ls in elik_maps.items():
+                        d_name  = pjoin(args.output_dir, name, st)
+                        if not isdir(d_name):
+                            subprocess.run(['mkdir', d_name], stdout=subprocess.PIPE)
+                        json.dump(ls, open(pjoin(d_name, "docs_slice_%05d.json" % (args.slnum)), 'w'))
+                print('saved json files %.2f' % (time() - start_time,))
+            resp_c      = subprocess.run(['rm', fpath], stdout=subprocess.PIPE)
+        except:
             continue
-        # Extract, tokenize, and filter articles by language
-        f = open(fpath, buffering=4096)
-        article_url = ''
-        article_id  = ''
-        article_txt = ''
-        last_line   = ''
-        read_text   = False
-        ct          = 0
-        start_time = time()
-        ccid_path_tuple = False
-        for line in f:
-            if line.startswith("WARC/1.0"):
-                if ccid_path_tuple:
-                    ct += 1
-                    article     = {'ccid': article_id,
-                                   'url' : article_url,
-                                   'text': word_url_tokenize(article_txt)}
-                    name, eli_k, num            = ccid_path_tuple
-                    articles[name][eli_k[0]]   = articles[name].get(eli_k[0], [])
-                    articles[name][eli_k[0]]   += [(eli_k, num, article)]
-                article_txt = ''
-                read_text   = False
-            if line.startswith("WARC-Target-URI"):
-                try:
-                    article_url     = line.strip().split()[-1]
-                except:
-                    article_url     = '<UNK>'
-            if line.startswith("WARC-Record-ID"):
-                try:
-                    article_id      = line.strip().split()[-1]
-                    ccid_path_tuple = select_ccid.get(article_id, False)
-                except:
-                    article_id      = '<UNK>'
-                    ccid_path_tuple = False
-            if read_text and (last_line.strip() + line.strip()) != '':
-                article_txt += line + '\n'
-                last_line   = line
-            if line.startswith("Content-Length: ") and ccid_path_tuple:
-                read_text   = True
-        if ccid_path_tuple:
-            ct += 1
-            article     = {'ccid': article_id,
-                           'url' : article_url,
-                           'text': word_url_tokenize(article_txt)}
-            name, eli_k, num            = ccid_path_tuple
-            articles[name][eli_k[0]]   = articles[name].get(eli_k[0], [])
-            articles[name][eli_k[0]]   += [(eli_k, num, article)]
-        f.close()
-        print(">>>>>>>>>> ARTICLES FOUND %d in %.2f" % (ct, time() - start_time))
-        if i % args.save_freq == args.save_freq - 1:
-            for name, elik_maps in articles.items():
-                print('saving', name, i, len(elik_maps))
-                for st, ls in elik_maps.items():
-                    d_name  = pjoin(args.output_dir, name, st)
-                    if not isdir(d_name):
-                        subprocess.run(['mkdir', d_name], stdout=subprocess.PIPE)
-                    json.dump(ls, open(pjoin(d_name, "docs_slice_%05d.json" % (args.slnum)), 'w'))
-            print('saved json files %.2f' % (time() - start_time,))
-        resp_c      = subprocess.run(['rm', fpath], stdout=subprocess.PIPE)
     print('final save')
     for name, elik_maps in articles.items():
         print('saving', name, i, len(elik_maps))
