@@ -11,6 +11,7 @@ if ca == 'finalize':
     num_slice   = 0
     docs        = []
     for i in range(10):
+        print(i)
         docs    += json.load(open(pjoin('processed_data/collected_docs', name, '%d.json' % (i,))))
         while len(docs) > 3000:
             print('writing slice', num_slice, name)
@@ -26,7 +27,7 @@ else:
         c_l = [ca]
     merged  = []
     for c in c_l:
-        d_name	= pjoin('processed_data/collected_docs', name, c)
+        d_name  = pjoin('processed_data/collected_docs', name, c)
         if isdir(d_name):
             merged  += merge_support_docs(d_name)
     if len(merged) > 0:
