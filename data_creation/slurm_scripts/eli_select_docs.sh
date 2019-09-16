@@ -4,4 +4,6 @@ cd /mnt/disks/sec/ELI5/data_creation
 pwd
 echo $NM
 echo $C
-python3.6 select_sentences_tfidf.py -sr_n $NM -sid $C
+echo $NS
+echo $NC
+python select_sentences_tfidf.py -sr_n $NM -sid $C -ns $NS -nc $NC
